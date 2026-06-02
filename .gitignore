@@ -1,0 +1,23 @@
+# Secrets / environment
+.env
+*.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Playwright / debug artifacts
+debug_page_*.html
+playwright_debug_*.html
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
