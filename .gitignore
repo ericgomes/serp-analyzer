@@ -4,6 +4,22 @@
 .env.*
 !.env.example
 
+# Access tokens for the encrypted vault (must never reach the repo)
+vault_tokens.json
+
+# Plaintext analysis data — kept local only; the public site ships the
+# encrypted vault.js instead, so raw reputation data is never published.
+data.js
+analysis_data.js
+analysis_results.json
+analysis_results.csv
+analysis_results_old.json
+analysis_results_old.csv
+results.json
+results.csv
+urls.txt
+consolidated_report.md
+
 # Python
 __pycache__/
 *.py[cod]

@@ -1,70 +1,92 @@
-document.addEventListener("DOMContentLoaded", () => {
-    // Parse current active query from URL parameter 'q'
+document.addEventListener("DOMContentLoaded", async () => {
+    // ---- Token-gated access -------------------------------------------------
+    // Each analysis is reachable only via a secret token in the URL (?t=...).
+    // With a valid token the matching analysis is decrypted and shown; without
+    // a token (or with an unknown one) the tool opens completely blank.
     const urlParams = new URLSearchParams(window.location.search);
-    let currentQuery = urlParams.get('q') || "Marcelo Baptista de Oliveira";
-    
-    // Set placeholder query input in the header
+    const accessToken = urlParams.get('t') || "";
+
+    // Crypto helpers (Web Crypto API — available on https and on localhost)
+    async function sha256Bytes(str) {
+        const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+        return new Uint8Array(buf);
+    }
+    async function sha256Hex(str) {
+        const bytes = await sha256Bytes(str);
+        return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+    function base64ToBytes(b64) {
+        const bin = atob(b64);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+    }
+    async function decryptVaultBlob(b64, token) {
+        const raw = base64ToBytes(b64);
+        const iv = raw.slice(0, 12);
+        const ciphertext = raw.slice(12);
+        const keyBytes = await sha256Bytes(token);
+        const key = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM" }, false, ["decrypt"]);
+        const ptBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+        return JSON.parse(new TextDecoder().decode(ptBuf));
+    }
+
+    // Load multi-query analysis store + token map from localStorage
+    let store = {};
+    try { store = JSON.parse(localStorage.getItem("reputation_analyses_store")) || {}; }
+    catch (e) { store = {}; }
+    let tokenMap = {};
+    try { tokenMap = JSON.parse(localStorage.getItem("reputation_token_map")) || {}; }
+    catch (e) { tokenMap = {}; }
+
+    // Resolve the active analysis strictly from the URL token.
+    async function resolveAnalysisByToken(token) {
+        if (!token) return null;
+        // 1) Analyses created/unlocked previously in this browser
+        if (tokenMap[token] && store[tokenMap[token]]) {
+            return { name: tokenMap[token], data: store[tokenMap[token]] };
+        }
+        // 2) Encrypted vault (published analyses)
+        if (window.VAULT) {
+            try {
+                const id = await sha256Hex("vault-id:" + token);
+                const blob = window.VAULT[id];
+                if (blob) {
+                    const payload = await decryptVaultBlob(blob, token);
+                    return {
+                        name: payload.name || "Análise",
+                        data: {
+                            results: payload.results || [],
+                            report: payload.report || "",
+                            reportTime: payload.reportTime || ""
+                        }
+                    };
+                }
+            } catch (e) {
+                console.warn("Não foi possível abrir a análise protegida (token inválido?).");
+            }
+        }
+        return null;
+    }
+
+    let currentQuery = "";
+    let activeQueryData = { results: [], report: "", reportTime: "" };
+
+    const resolved = await resolveAnalysisByToken(accessToken);
+    if (resolved) {
+        currentQuery = resolved.name;
+        activeQueryData = resolved.data;
+        // Persist into the local store so the dropdown and live updates work
+        store[currentQuery] = activeQueryData;
+        tokenMap[accessToken] = currentQuery;
+        localStorage.setItem("reputation_analyses_store", JSON.stringify(store));
+        localStorage.setItem("reputation_token_map", JSON.stringify(tokenMap));
+    }
+
+    // Set the query input in the header (blank when no analysis is unlocked)
     const newQueryInput = document.getElementById("new-query-input");
     if (newQueryInput) {
         newQueryInput.value = currentQuery;
-    }
-
-    // Load multi-query analysis store from localStorage
-    let store = {};
-    const localStore = localStorage.getItem("reputation_analyses_store");
-    if (localStore) {
-        try {
-            store = JSON.parse(localStore);
-        } catch (e) {
-            console.error("Erro ao carregar store de análises:", e);
-        }
-    }
-
-    // Migration of legacy 'analysisResults' to 'reputation_analyses_store'
-    const legacyResults = localStorage.getItem("analysisResults");
-    if (legacyResults && Object.keys(store).length === 0) {
-        try {
-            const results = JSON.parse(legacyResults);
-            const report = localStorage.getItem("consolidatedReport");
-            const reportTime = localStorage.getItem("consolidatedReportTime");
-            
-            store["Marcelo Baptista de Oliveira"] = {
-                results: results,
-                report: report || (typeof consolidatedReport !== 'undefined' ? consolidatedReport : ""),
-                reportTime: reportTime || (typeof consolidatedReportTime !== 'undefined' ? consolidatedReportTime : "")
-            };
-            localStorage.setItem("reputation_analyses_store", JSON.stringify(store));
-        } catch (e) {
-            console.error("Erro ao migrar dados legados:", e);
-        }
-    }
-
-    // If store is still empty, initialize with default Marcelo Baptista de Oliveira using static JS files
-    if (Object.keys(store).length === 0) {
-        let results = [];
-        if (typeof analysisResults !== 'undefined') {
-            results = analysisResults;
-        } else if (typeof searchResults !== 'undefined') {
-            results = searchResults;
-        }
-        
-        store["Marcelo Baptista de Oliveira"] = {
-            results: results,
-            report: typeof consolidatedReport !== 'undefined' ? consolidatedReport : "",
-            reportTime: typeof consolidatedReportTime !== 'undefined' ? consolidatedReportTime : ""
-        };
-        localStorage.setItem("reputation_analyses_store", JSON.stringify(store));
-    }
-
-    // Handle Active query data selection
-    let activeQueryData = store[currentQuery];
-    if (!activeQueryData) {
-        // If currentQuery not in store, initialize a blank structure
-        activeQueryData = {
-            results: [],
-            report: "",
-            reportTime: ""
-        };
     }
 
     // Update global variables for page scope
@@ -72,30 +94,39 @@ document.addEventListener("DOMContentLoaded", () => {
     const isAiLoaded = analysisResultsList.length > 0;
     const data = isAiLoaded ? analysisResultsList : (typeof searchResults !== 'undefined' ? searchResults : []);
 
-    // Populating dropdown and binding reload on change
+    // Reverse map: analysis name -> its access token (for building share URLs)
+    const nameToToken = {};
+    Object.entries(tokenMap).forEach(([tok, name]) => { nameToToken[name] = tok; });
+
+    // Populating dropdown and binding navigation (by token) on change
     const querySelect = document.getElementById("query-select");
     if (querySelect) {
         querySelect.innerHTML = "";
-        
-        // Collect all keys
-        const keys = Object.keys(store);
-        if (!keys.includes(currentQuery)) {
-            keys.push(currentQuery);
+
+        // Placeholder shown when nothing is unlocked
+        if (!currentQuery) {
+            const ph = document.createElement("option");
+            ph.value = "";
+            ph.textContent = "-- Nenhuma análise (abra com o token na URL) --";
+            ph.selected = true;
+            querySelect.appendChild(ph);
         }
-        
-        keys.forEach(k => {
+
+        // Only list analyses unlocked in this browser that have a known token
+        Object.keys(store).forEach(k => {
+            if (!nameToToken[k]) return;
             const opt = document.createElement("option");
             opt.value = k;
             opt.textContent = k;
-            if (k === currentQuery) {
-                opt.selected = true;
-            }
+            if (k === currentQuery) opt.selected = true;
             querySelect.appendChild(opt);
         });
 
         querySelect.addEventListener("change", (e) => {
-            const val = e.target.value;
-            window.location.search = `?q=${encodeURIComponent(val)}`;
+            const tok = nameToToken[e.target.value];
+            if (tok) {
+                window.location.search = `?t=${encodeURIComponent(tok)}`;
+            }
         });
     }
 
@@ -434,11 +465,19 @@ document.addEventListener("DOMContentLoaded", () => {
             const newLimitVal = document.getElementById("new-query-limit")?.value || "5";
             
             currentQuery = newQueryVal;
-            
-            // Silently update address bar query param so we store results under correct key
-            const newUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?q=${encodeURIComponent(currentQuery)}`;
+
+            // Generate (or reuse) a secret access token for this analysis and put
+            // it in the address bar so the result is reachable only via this URL.
+            let token = nameToToken[currentQuery];
+            if (!token) {
+                token = (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, "") : Math.random().toString(36).slice(2));
+                nameToToken[currentQuery] = token;
+                tokenMap[token] = currentQuery;
+                localStorage.setItem("reputation_token_map", JSON.stringify(tokenMap));
+            }
+            const newUrl = `${window.location.protocol}//${window.location.host}${window.location.pathname}?t=${encodeURIComponent(token)}`;
             window.history.pushState({ path: newUrl }, '', newUrl);
-            
+
             // Clean local analysis list for the new run
             localAnalysisResults = [];
             
@@ -470,6 +509,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 localStorage.removeItem("consolidatedReport");
                 localStorage.removeItem("consolidatedReportTime");
                 localStorage.removeItem("reputation_analyses_store");
+                localStorage.removeItem("reputation_token_map");
                 appendLog("[Console] Cache local limpo. Recarregando página...");
                 window.location.reload();
             }
