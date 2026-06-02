@@ -965,7 +965,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         <html lang="pt-BR">
         <head>
             <meta charset="UTF-8">
-            <title>Relatório de Reputação Digital - Marcelo Baptista de Oliveira</title>
+            <title>${currentQuery ? `Relatório de Reputação Digital - ${currentQuery}` : "Relatório de Reputação Digital"}</title>
             <style>
                 body {
                     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
