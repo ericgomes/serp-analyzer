@@ -159,8 +159,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const kpiTotal = document.getElementById("kpi-total");
     const kpiDomains = document.getElementById("kpi-domains");
     const kpiSocial = document.getElementById("kpi-social");
-    const kpiProtege = document.getElementById("kpi-protege");
-    
+
     // Buttons
     const downloadPdfBtn = document.getElementById("download-pdf");
     const backToTopBtn = document.getElementById("back-to-top");
@@ -516,33 +515,25 @@ document.addEventListener("DOMContentLoaded", () => {
         
         const domains = new Set();
         let socialCount = 0;
-        let protegeCount = 0;
 
         results.forEach(item => {
             const domain = extractDomain(item.url);
             domains.add(domain);
-            
+
             // Social Media detection
-            if (domain.includes("linkedin.com") || 
-                domain.includes("instagram.com") || 
-                domain.includes("facebook.com") || 
-                domain.includes("youtube.com") || 
+            if (domain.includes("linkedin.com") ||
+                domain.includes("instagram.com") ||
+                domain.includes("facebook.com") ||
+                domain.includes("youtube.com") ||
                 domain.includes("tiktok.com") ||
                 domain.includes("twitter.com") ||
                 domain.includes("x.com")) {
                 socialCount++;
             }
-
-            // Protege mention detection
-            const searchStr = `${item.title} ${item.url} ${item.snippet || ''} ${item.resumo || ''} ${item.categoria || ''}`.toLowerCase();
-            if (searchStr.includes("protege")) {
-                protegeCount++;
-            }
         });
 
         kpiDomains.textContent = domains.size;
         kpiSocial.textContent = socialCount;
-        kpiProtege.textContent = protegeCount;
     }
 
     function updateResultsList() {
